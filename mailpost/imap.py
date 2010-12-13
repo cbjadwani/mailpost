@@ -202,12 +202,13 @@ class ImapClient(object):
         return self.search('(DELETED)')
 
     def close(self):
-        self.connection.close()
-        self._connection = None
+        if self.mailbox:
+            self.connection.close()
 
     def logout(self):
         self.close()
         self.connection.logout()
+        self._connection = None
 
 
 if __name__ == '__main__':
