@@ -28,6 +28,9 @@ import re
 SENDER_EXPR = re.compile(r'[\w\.]+@[\w\.-]+')
 #Doesn't care for email validity much
 
+# Archive Directory
+ARCHIVE_DIR = "[Gmail]/All Mail"
+
 
 class Message(object):
 
@@ -94,6 +97,10 @@ class Message(object):
 
     def delete(self):
         self.add_flag(r'\Deleted')
+
+    def archive(self, archive_dir=ARCHIVE_DIR):
+        self.session.copy(self.uid, archive_dir)
+        self.delete()
 
     def download(self):
         #TODO: Ideally we shouldn't download the whole thing in order to parse
@@ -167,6 +174,10 @@ class ImapClient(object):
         port = self.port or default_port
         self._connection = cls(self.host, port)
 
+    def _be_ready(self):
+        if not self.mailbox:
+            self.select()
+
     @property
     def connection(self):
         if not self._connection:
@@ -185,8 +196,7 @@ class ImapClient(object):
         self.mailbox = mailbox
 
     def search(self, query):
-        if not self.mailbox:
-            self.select()
+        self._be_ready()
         return MessageList(self.connection, query)
 
     def all(self):
@@ -210,13 +220,25 @@ class ImapClient(object):
         self.connection.logout()
         self._connection = None
 
+    def list(self):
+        self._be_ready()
+        return self.connection.list()
+
+    def copy(self, message_set, mailbox):
+        self._be_ready()
+        return self.connection.copy(message_set, mailbox)
+
 
 if __name__ == '__main__':
-    USERNAME = 'test@gmail.com'
-    PASSWORD = 'TestTest'
+    from getpass import getpass
+    USERNAME = raw_input("Enter your e-mail: ")
+    PASSWORD = getpass()
     inbox = ImapClient('imap.gmail.com', USERNAME,
                        PASSWORD, ssl=True)
     print '---- LATEST 10 messages ----'
     for message in inbox.nondeleted()[-10:]:
         print message
+    print '---- Directory List ----'
+    for directory in inbox.list()[1]:
+        print directory
     inbox.logout()
