@@ -50,10 +50,10 @@ class Message(object):
         self.attachments = []
         self.sender = ''
         self.receiver = ''
-        sender = SENDER_EXPR.search(self._msg['from'])
+        sender = SENDER_EXPR.search(str(self._msg['from']))
         if sender:
             self.sender = sender.group()
-        receiver = SENDER_EXPR.search(self._msg['to'])
+        receiver = SENDER_EXPR.search(str(self._msg['to']))
         if receiver:
             self.receiver = receiver.group()
         for part in self._msg.walk():
