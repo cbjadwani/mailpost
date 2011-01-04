@@ -37,6 +37,7 @@ DEFAULT_RULE = {
     'send_files': True,
     #Backend-specific actions
     'actions': [],
+    'query': ['ALL'],
 }
 
 
@@ -57,9 +58,8 @@ class Mapper(object):
         match_func = fnmatch.fnmatch
         if rule['syntax'] == 'regexp':
             mathc_func = re.match
-        query = rule.get('query', 'ALL')
-        msg_list = self.client.search(query)
-        print "CBJ_DEBUG: query=%s,  len(msg_list)=%d" % (query, len(msg_list))
+        query_args = rule['query']
+        msg_list = self.client.search(*query_args)
 
         for message in msg_list:
             match = True
@@ -79,7 +79,6 @@ class Mapper(object):
                                 "Pattern should be string or list, not %s" %\
                                              type(pattern))
             if match:
-                print "Message: subject=", message.get('subject')
                 yield url, message
 
 
@@ -152,16 +151,23 @@ class Config(dict):
                 raise ConfigurationError(
                         "Unknown config file format %s" % fileformat)
 
-        def opt(key, default=None, required=False, vals=None):
+        def opt(key, default=None, required=False, vals=None, type_='scalar'):
             if not required and vals is not None:
                 default = vals[0]
+                if type_ == 'list':
+                    default = [default]
             val = config.get(key, default)
-            if required and (not val):
+            if required and (val is None):
                 raise ConfigurationError(
                         "'%s' configuration option is required" % key)
-            if vals is not None and val not in vals:
-                raise ConfigurationError(
-                        "Setting not supported: '%s'='%s'" % (key, val))
+            if vals is not None:
+                if type_ == 'list':
+                    if not all([v in vals for v in val]):
+                        raise ConfigurationError(
+                                "Setting not supported: '%s'='%s'" % (key, val))
+                if val not in vals:
+                    raise ConfigurationError(
+                            "Setting not supported: '%s'='%s'" % (key, val))
             return val
 
         self['backend']   = opt('backend', required=True, vals=['imap'])
@@ -170,8 +176,7 @@ class Config(dict):
         self['password']  = opt('password', required=True)
         self['port']      = opt('port', default=None)
         self['ssl']       = opt('ssl', default=False)
-        self['query']     = opt('query', vals=['ALL', 'UNSEEN', 'UNDELETED'])
-        self['mailboxes'] = opt('inboxes', ['INBOX'])
+        self['mailboxes'] = opt('inboxes', ['INBOX'], type_='list')
         self['base_url']  = opt('base_url', None)
 
         config_rules = opt('rules', required=True)
@@ -204,7 +209,6 @@ class Handler(object):
                                 self.config['port'],
                                 self.config['ssl'])
             self.client = client
-            query_method = getattr(client, self.config['query'])
 
             self.base_url = self.config['base_url']
             self.rules = self.config['rules']
@@ -222,19 +226,20 @@ class Handler(object):
 if __name__ == '__main__':
     sample_rules = [
         {
-            'url': 'http://localhost:8000/mail_test/',
+            'url': 'http://localhost:8000/translation_mail_test/',
             'conditions': {
                 'sender': ['*@gmail.com', '*@odesk.com', '*@google.com'],
             },
             'add_params': {'message_type':'test'},
             'actions': ['mark_as_read'],
-            'query': 'RECENT',
+            'query': ['SUBJECT', 'translation', 'SINCE', '15-Dec-2010']
         },
         { #"Catch all" rule
             'url': 'http://localhost:8000/mail_test/',
             'conditions': {
                 'subject': '*task*',
             },
+            'query': ['BEFORE', '1-Nov-2010'],
         },
     ]
 
