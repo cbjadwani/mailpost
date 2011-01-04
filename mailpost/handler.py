@@ -53,15 +53,10 @@ class Mapper(object):
         self.mappings = mappings
 
     def map(self, message):
-        for msg_rule in self.mappings:
-            try:
-                url = msg_rule['url']
-            except KeyError:
-                raise ConfigurationError('URL is required')
+        for rule in self.mappings:
+            url = rule['url']
             if self.base_url:
                 url = self.base_url.rstrip('/') + '/' + url.lstrip('/')
-            rule = DEFAULT_RULE.copy()
-            rule.update(msg_rule)
             match_func = fnmatch.fnmatch
             if rule['syntax'] == 'regexp':
                 mathc_func = re.match
@@ -135,6 +130,55 @@ class Mapper(object):
             yield url, result
 
 
+class Config(dict):
+    def __init__(self, config=None, config_file=None, fileformat=None):
+        super(Config, self).__init__()
+
+        if not config:
+            if not config_file:
+                raise ValueError(\
+                            "Either config or config_file must be specified")
+            if not fileformat:
+                fileformat = os.path.splitext(config_file)[1][1:]
+            if fileformat in ['yml', 'yaml']:
+                import yaml
+                config = yaml.load(open(config_file, 'r'))
+            else:
+                raise ConfigurationError(
+                        "Unknown config file format %s" % fileformat)
+
+        def opt(key, default=None, required=False, accept_vals=None):
+            if not required and accept_vals is not None:
+                default = accept_vals[0]
+            val = config.get(key, default)
+            if required and (not val):
+                raise ConfigurationError(
+                        "'%s' configuration option is required" % key)
+            if accept_vals is not None and val not in accept_vals:
+                raise ConfigurationError(
+                        "Setting not supported: '%s'='%s'" % (key, val))
+            return val
+
+        self['backend']   = opt('backend', required=True, accept_vals=['imap'])
+        self['host']      = opt('host', required=True)
+        self['username']  = opt('username', required=True)
+        self['password']  = opt('password', required=True)
+        self['port']      = opt('port', default=None)
+        self['ssl']       = opt('ssl', default=False)
+        self['query']     = opt('query', accept_vals=['all', 'unseen', 'undeleted'])
+        self['mailboxes'] = opt('inboxes', ['INBOX'])
+        self['base_url']  = opt('base_url', None)
+
+        config_rules = opt('rules', required=True)
+        self['rules'] = []
+        for config_rule in config_rules:
+            rule = DEFAULT_RULE.copy()
+            if 'url' not in config_rule:
+                raise ConfigurationError('URL is required for rules')
+            rule.update(config_rule)
+            self['rules'].append(rule)
+
+
 class Handler(object):
 
     def __init__(self, config=None, config_file=None, fileformat=None):
@@ -145,39 +189,20 @@ class Handler(object):
         If `fileformat` is absent, it will try to guess
         Possible values for `fileformat` are: 'yml'('yaml')
         """
-        if not config:
-            if not config_file:
-                raise ValueError(\
-                            "Either config or config_file must be specified")
-            if not fileformat:
-                fileformat = os.path.splitext(config_file)[1][1:]
-            if fileformat in ['yml', 'yaml']:
-                import yaml
-                config = yaml.load(open(config_file, 'r'))
-        self.config = config
+        self.config = Config(config, config_file, fileformat)
 
     def load_backend(self):
         if self.config['backend'] == 'imap':
-            host = self.config.get('host', None)
-            if not host:
-                raise ConfigurationError("'host' option is required")
-            username = self.config.get('username', None)
-            if not username:
-                raise ConfigurationError("'username' option is required")
-            password = self.config.get('password', None)
-            if not password:
-                raise ConfigurationError("'password' option is required")
-            port = self.config.get('port', None)
-            ssl = self.config.get('ssl', False)
-            query = self.config.get('query', 'all')
-            if not query in ['all', 'unseen', 'undeleted']:
-                raise ConfigurationError("Unknown query: %s" % query)
-            mailboxes = self.config.get('inboxes', ['INBOX'])
-            self.base_url = self.config.get('base_url', None)
+            client = ImapClient(self.config['host'],
+                                self.config['username'],
+                                self.config['password'],
+                                self.config['port'],
+                                self.config['ssl'])
+            query_method = getattr(client, self.config['query'])
+            self.msg_list = query_method()
 
+            self.base_url = self.config['base_url']
             self.rules = self.config['rules']
-            client = ImapClient(host, username, password, port, ssl)
-            self.msg_list = getattr(client, query)()
         else:
             raise ConfigurationError("Backend '%s' is not supported" %\
                                      self.config['backend'])
@@ -215,4 +240,7 @@ if __name__ == '__main__':
     }
 
     handler = Handler(config=sample_config)
-    handler.process()
+    for url, result in handler.process():
+        print "URL:", url
+        print "result:", result
+        print

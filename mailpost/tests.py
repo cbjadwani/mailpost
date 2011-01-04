@@ -19,7 +19,7 @@ from mock import Mock
 
 from mailpost.fnmatch import fnmatch, fnmatchcase, translate
 from mailpost.imap import ImapClient, Message
-from mailpost.handler import Handler, Mapper
+from mailpost.handler import Handler, Mapper, DEFAULT_RULE
 
 
 class TestFnmatch(unittest.TestCase):
@@ -114,7 +114,7 @@ class TestMailPost(unittest.TestCase):
 
         self.msg_list = [self.message, self.message]
 
-        self.sample_rules = [
+        sample_rules = [
                 {
                     'url': '/upload_email/',
                     'conditions': {
@@ -127,6 +127,12 @@ class TestMailPost(unittest.TestCase):
                     'url': '/upload_email/',
                 },
             ]
+
+        self.sample_rules = []
+        for rule in sample_rules:
+            full_rule = DEFAULT_RULE.copy()
+            full_rule.update(rule)
+            self.sample_rules.append(full_rule)
 
     def test_mapper_current_workflow(self, *args, **kwargs):
 
@@ -151,3 +157,7 @@ class TestMailPost(unittest.TestCase):
         mapper = Mapper(self.sample_rules, 'http://localhost:8000')
         mapping = mapper.map(self.message)
         assert 'Message-ID' in mapping[1]['msg_params']
+
+
+if __name__ == '__main__':
+    unittest.main()
