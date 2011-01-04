@@ -46,20 +46,22 @@ class ConfigurationError(Exception):
 
 class Mapper(object):
 
-    def __init__(self, mappings=None, base_url=None):
+    def __init__(self, client, base_url=None):
+        self.client = client
         self.base_url = base_url
-        if not mappings:
-            mappings = []
-        self.mappings = mappings
 
-    def map(self, message):
-        for rule in self.mappings:
-            url = rule['url']
-            if self.base_url:
-                url = self.base_url.rstrip('/') + '/' + url.lstrip('/')
-            match_func = fnmatch.fnmatch
-            if rule['syntax'] == 'regexp':
-                mathc_func = re.match
+    def map(self, rule):
+        url = rule['url']
+        if self.base_url:
+            url = self.base_url.rstrip('/') + '/' + url.lstrip('/')
+        match_func = fnmatch.fnmatch
+        if rule['syntax'] == 'regexp':
+            mathc_func = re.match
+        query = rule.get('query', 'ALL')
+        msg_list = self.client.search(query)
+        print "CBJ_DEBUG: query=%s,  len(msg_list)=%d" % (query, len(msg_list))
+
+        for message in msg_list:
             match = True
             for key, pattern in rule['conditions'].items():
                 value = message.get(key, None)
@@ -77,10 +79,17 @@ class Mapper(object):
                                 "Pattern should be string or list, not %s" %\
                                              type(pattern))
             if match:
-                return url, rule
-        return None
+                print "Message: subject=", message.get('subject')
+                yield url, message
 
-    def process(self, inbox):
+
+    def get_messages(self, rules):
+        for rule in rules:
+            for url, message in self.map(rule):
+                yield url, message, rule
+
+
+    def process(self, rules):
         """
         Inbox is expected to be a list of imap.Message objects.
         Although any list of mapping objects is accepted, provided
@@ -90,11 +99,7 @@ class Mapper(object):
         # Poster: Register the streaming http handlers with urllib2
         register_openers()
 
-        for message in inbox:
-            res = self.map(message)
-            if not res:
-                continue
-            url, options = res
+        for url, message, options in self.get_messages(rules):
             for action in options['actions']:
                 getattr(message, action)()
             files = []
@@ -147,25 +152,25 @@ class Config(dict):
                 raise ConfigurationError(
                         "Unknown config file format %s" % fileformat)
 
-        def opt(key, default=None, required=False, accept_vals=None):
-            if not required and accept_vals is not None:
-                default = accept_vals[0]
+        def opt(key, default=None, required=False, vals=None):
+            if not required and vals is not None:
+                default = vals[0]
             val = config.get(key, default)
             if required and (not val):
                 raise ConfigurationError(
                         "'%s' configuration option is required" % key)
-            if accept_vals is not None and val not in accept_vals:
+            if vals is not None and val not in vals:
                 raise ConfigurationError(
                         "Setting not supported: '%s'='%s'" % (key, val))
             return val
 
-        self['backend']   = opt('backend', required=True, accept_vals=['imap'])
+        self['backend']   = opt('backend', required=True, vals=['imap'])
         self['host']      = opt('host', required=True)
         self['username']  = opt('username', required=True)
         self['password']  = opt('password', required=True)
         self['port']      = opt('port', default=None)
         self['ssl']       = opt('ssl', default=False)
-        self['query']     = opt('query', accept_vals=['all', 'unseen', 'undeleted'])
+        self['query']     = opt('query', vals=['ALL', 'UNSEEN', 'UNDELETED'])
         self['mailboxes'] = opt('inboxes', ['INBOX'])
         self['base_url']  = opt('base_url', None)
 
@@ -198,8 +203,8 @@ class Handler(object):
                                 self.config['password'],
                                 self.config['port'],
                                 self.config['ssl'])
+            self.client = client
             query_method = getattr(client, self.config['query'])
-            self.msg_list = query_method()
 
             self.base_url = self.config['base_url']
             self.rules = self.config['rules']
@@ -209,8 +214,8 @@ class Handler(object):
 
     def process(self):
         self.load_backend()
-        mapper = Mapper(self.rules, self.base_url)
-        for url, result in mapper.process(self.msg_list):
+        mapper = Mapper(self.client, self.base_url)
+        for url, result in mapper.process(self.rules):
             yield url, result
 
 
@@ -220,13 +225,16 @@ if __name__ == '__main__':
             'url': 'http://localhost:8000/mail_test/',
             'conditions': {
                 'sender': ['*@gmail.com', '*@odesk.com', '*@google.com'],
-                'subject': '*test*',
             },
             'add_params': {'message_type':'test'},
             'actions': ['mark_as_read'],
+            'query': 'RECENT',
         },
         { #"Catch all" rule
             'url': 'http://localhost:8000/mail_test/',
+            'conditions': {
+                'subject': '*task*',
+            },
         },
     ]
 
