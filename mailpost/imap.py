@@ -10,6 +10,7 @@ import imaplib
 import email
 from cStringIO import StringIO
 import re
+import pickle
 
 #WARNING: This module is at very early stage of development
 
@@ -99,6 +100,9 @@ class Message(object):
         #TODO: Ideally we shouldn't download the whole thing in order to parse
         #headers.
         pass
+
+    def pickled(self):
+        return pickle.dumps(self._msg)
 
 
 class MessageList(object):

@@ -103,22 +103,25 @@ class Mapper(object):
             for action in options['actions']:
                 getattr(message, action)()
             files = []
-            if options['send_files']:
-                for num, attachment in enumerate(message.attachments):
-                    filename, ctype, fileobj = attachment
-                    file_param = MultipartParam('attachment[%d]' % num,
-                                                filename=filename,
-                                                filetype=ctype,
-                                                fileobj=fileobj)
-                    files.append(file_param)
             data = {}
-            for name in options['msg_params']:
-                part = message.get(name, None)
-                if not part:
-                    part = getattr(message, name, None)
-                if part: #TODO: maybe we should raise an exception
-                         #if there's no part
-                    data[name] = part
+            if options['raw']:
+                data['raw_message'] = message.pickled()
+            else:
+                if options['send_files']:
+                    for num, attachment in enumerate(message.attachments):
+                        filename, ctype, fileobj = attachment
+                        file_param = MultipartParam('attachment[%d]' % num,
+                                                    filename=filename,
+                                                    filetype=ctype,
+                                                    fileobj=fileobj)
+                        files.append(file_param)
+                for name in options['msg_params']:
+                    part = message.get(name, None)
+                    if not part:
+                        part = getattr(message, name, None)
+                    if part: #TODO: maybe we should raise an exception
+                            #if there's no part
+                        data[name] = part
             data.update(options['add_params'])
             data = MultipartParam.from_params(data)
             data += files
@@ -173,6 +176,7 @@ class Config(dict):
         self['query']     = opt('query', vals=['ALL', 'UNSEEN', 'UNDELETED'])
         self['mailboxes'] = opt('inboxes', ['INBOX'])
         self['base_url']  = opt('base_url', None)
+        self['raw']       = opt('raw', default=False)
 
         config_rules = opt('rules', required=True)
         self['rules'] = []
@@ -204,7 +208,6 @@ class Handler(object):
                                 self.config['port'],
                                 self.config['ssl'])
             self.client = client
-            query_method = getattr(client, self.config['query'])
 
             self.base_url = self.config['base_url']
             self.rules = self.config['rules']
