@@ -28,9 +28,6 @@ import re
 SENDER_EXPR = re.compile(r'[\w\.]+@[\w\.-]+')
 #Doesn't care for email validity much
 
-# Archive Directory
-ARCHIVE_DIR = "[Gmail]/All Mail"
-
 
 class Message(object):
 
@@ -95,11 +92,14 @@ class Message(object):
     def mark_as_read(self):
         self.add_flag(r'\Seen')
 
+    def copy(self, dest_dir):
+        self.session.copy(self. uid, dest_dir)
+
     def delete(self):
         self.add_flag(r'\Deleted')
 
-    def archive(self, archive_dir=ARCHIVE_DIR):
-        self.session.copy(self.uid, archive_dir)
+    def move(self, dest_dir):
+        self.copy(dest_dir)
         self.delete()
 
     def download(self):
