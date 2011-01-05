@@ -123,9 +123,9 @@ def patched_imap_connect():
                 return 'BAD', []
 
         elif args[0] == 'SEARCH':
-            if args[2] == 'ALL':
+            if list(args[2:]) == ['ALL']:
                 return 'OK', ["1 2"]
-            elif args[2] == 'UNSEEN':
+            elif list(args[2:]) == ['UNSEEN']:
                 return 'OK', ["1"]
             else:
                 return 'OK', ["2"]
@@ -152,11 +152,11 @@ class TestMailPost(unittest.TestCase):
                     },
                     'add_params': {'message_type':'test'},
                     'actions': ['mark_as_read'],
-                    'query': 'UNSEEN',
+                    'query': ['UNSEEN'],
                 },
                 { #"Catch all" rule
                     'url': '/upload_email/',
-                    'query': 'UNDELETED',
+                    'query': ['UNDELETED'],
                 },
             ]
 
@@ -172,10 +172,10 @@ class TestMailPost(unittest.TestCase):
         self.assert_(len(matches) == 2, len(matches))
         for url, message, rule in matches:
             mid = message = message.get('Message-ID')
-            if rule['query'] == 'UNSEEN':
+            if rule['query'] == ['UNSEEN']:
                 self.assert_(mid=='123', mid)
                 self.assert_(url=='http://localhost:8000/upload_unseen_email/')
-            elif rule['query'] == 'UNDELETED':
+            elif rule['query'] == ['UNDELETED']:
                 self.assert_(mid=='124', mid)
                 self.assert_(url=='http://localhost:8000/upload_email/')
             else:

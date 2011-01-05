@@ -118,7 +118,7 @@ class MessageList(object):
 
     def _get_uids(self):
         charset = None #FIXME
-        status, data = self.session.uid('SEARCH', charset, self.query)
+        status, data = self.session.uid('SEARCH', charset, *self.query)
         if status != 'OK':
             raise Exception(data)
         self._uids = data[0].split()
@@ -195,9 +195,9 @@ class ImapClient(object):
         self.connection.select(mailbox)
         self.mailbox = mailbox
 
-    def search(self, query):
+    def search(self, *query_args):
         self._be_ready()
-        return MessageList(self.connection, query)
+        return MessageList(self.connection, query_args)
 
     def all(self):
         return self.search('ALL')
