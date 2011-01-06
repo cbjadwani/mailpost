@@ -123,30 +123,37 @@ class MessageList(object):
             raise Exception(data)
         self._uids = data[0].split()
 
-    def __len__(self):
+    @property
+    def uids(self):
         if self._uids is None:
             self._get_uids()
-        return len(self._uids)
+        return self._uids
+
+    def __len__(self):
+        return len(self.uids)
 
     def __iter__(self):
-        if self._uids is None:
-            self._get_uids()
-        for uid in self._uids:
+        for uid in self.uids:
             yield self.get(uid)
 
     def __getitem__(self, key):
         if not isinstance(key, (slice, int)):
             raise TypeError
-        if self._uids is None:
-            self._get_uids()
         if isinstance(key, slice):
             #TODO: Generator should be used here:
-            return [self.get(uid) for uid in self._uids[key]]
+            return [self.get(uid) for uid in self.uids[key]]
         else:
-            return self.get(self._uids[key])
+            return self.get(self.uids[key])
 
     def get(self, uid):
-        return self._cache.get(uid, Message(self.session, uid))
+        try:
+            return self._cache[uid]
+        except KeyError, exc:
+            if uid not in self.uids:
+                raise exc
+            message = Message(self.session, uid)
+            self._cache[uid] = message
+            return message
 
 
 class ImapClient(object):
@@ -186,6 +193,7 @@ class ImapClient(object):
 
     def login(self, username, password):
         self.connection.login(username, password)
+        self.logged_in = True
 
     def select(self, mailbox='INBOX'):
         if not self.logged_in: #TODO: Maybe general 'state' would be better
@@ -214,11 +222,13 @@ class ImapClient(object):
     def close(self):
         if self.mailbox:
             self.connection.close()
+            self.mailbox = None
 
     def logout(self):
         self.close()
         self.connection.logout()
         self._connection = None
+        self.logged_in = False
 
     def list(self):
         self._be_ready()
