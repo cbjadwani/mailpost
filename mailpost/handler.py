@@ -38,6 +38,8 @@ DEFAULT_RULE = {
     'send_files': True,
     #Backend-specific actions
     'actions': [],
+    'query': ['ALL'],
+    'mailbox': 'INBOX',
 }
 
 
@@ -47,25 +49,20 @@ class ConfigurationError(Exception):
 
 class Mapper(object):
 
-    def __init__(self, mappings=None, base_url=None):
-        self.base_url = base_url
-        if not mappings:
-            mappings = []
-        self.mappings = mappings
+    def __init__(self, client, config):
+        self.client = client
+        self.base_url = config['base_url']
+        self.archive_dir = config['archive']
 
-    def map(self, message):
-        for msg_rule in self.mappings:
-            try:
-                url = msg_rule['url']
-            except KeyError:
-                raise ConfigurationError('URL is required')
-            if self.base_url:
-                url = self.base_url.rstrip('/') + '/' + url.lstrip('/')
-            rule = DEFAULT_RULE.copy()
-            rule.update(msg_rule)
-            match_func = fnmatch.fnmatch
-            if rule['syntax'] == 'regexp':
-                mathc_func = re.match
+    def map(self, rule):
+        match_func = fnmatch.fnmatch
+        if rule['syntax'] == 'regexp':
+            match_func = re.match
+
+        self.client.select(rule['mailbox'])
+        msg_list = self.client.search(*rule['query'])
+
+        for message in msg_list:
             match = True
             for key, pattern in rule['conditions'].items():
                 value = message.get(key, None)
@@ -83,10 +80,16 @@ class Mapper(object):
                                 "Pattern should be string or list, not %s" %\
                                              type(pattern))
             if match:
-                return url, rule
-        return None
+                yield message
 
-    def process(self, inbox):
+
+    def get_messages(self, rules):
+        for rule in rules:
+            for message in self.map(rule):
+                yield message, rule
+
+
+    def process(self, rules):
         """
         Inbox is expected to be a list of imap.Message objects.
         Although any list of mapping objects is accepted, provided
@@ -96,11 +99,15 @@ class Mapper(object):
         # Poster: Register the streaming http handlers with urllib2
         register_openers()
 
-        for message in inbox:
-            res = self.map(message)
-            if not res:
+        processed_mailboxes = set()
+        processed_uids = set()
+
+        for message, options in self.get_messages(rules):
+            if message.uid in processed_uids:
                 continue
-            url, options = res
+            processed_mailboxes.add(options['mailbox'])
+            processed_uids.add(message.uid)
+
             for action in options['actions']:
                 getattr(message, action)()
             files = []
@@ -126,6 +133,7 @@ class Mapper(object):
             data = MultipartParam.from_params(data)
             data += files
             datagen, headers = multipart_encode(data)
+            url = options['url']
             request = urllib2.Request(url, datagen, headers)
             if options.get('auth', None):
                 cj, urlopener = auth.authenticate(options['auth'], request, 
@@ -136,6 +144,75 @@ class Mapper(object):
                 result = e
                 #continue    # TODO Log error and proceed.
             yield url, result
+
+        # archive messages
+        if self.archive_dir:
+            for mailbox in processed_mailboxes:
+                self.client.select(mailbox)
+                msg_list = self.client.search('ALL')
+                for uid in msg_list.uids:
+                    if uid not in processed_uids:
+                        message = msg_list.get(uid)
+                        message.move(self.archive_dir)
+
+
+class Config(dict):
+    def __init__(self, config=None, config_file=None, fileformat=None):
+        super(Config, self).__init__()
+
+        if not config:
+            if not config_file:
+                raise ValueError(\
+                            "Either config or config_file must be specified")
+            if not fileformat:
+                fileformat = os.path.splitext(config_file)[1][1:]
+            if fileformat in ['yml', 'yaml']:
+                import yaml
+                config = yaml.load(open(config_file, 'r'))
+            else:
+                raise ConfigurationError(
+                        "Unknown config file format %s" % fileformat)
+
+        def opt(key, default=None, required=False, vals=None, type_='scalar'):
+            if not required and vals is not None:
+                default = vals[0]
+                if type_ == 'list':
+                    default = [default]
+            val = config.get(key, default)
+            if required and (val is None):
+                raise ConfigurationError(
+                        "'%s' configuration option is required" % key)
+            if vals is not None:
+                if type_ == 'list':
+                    if not all([v in vals for v in val]):
+                        raise ConfigurationError(
+                                "Setting not supported: '%s'='%s'" % (key, val))
+                if val not in vals:
+                    raise ConfigurationError(
+                            "Setting not supported: '%s'='%s'" % (key, val))
+            return val
+
+        self['backend']   = opt('backend', required=True, vals=['imap'])
+        self['host']      = opt('host', required=True)
+        self['username']  = opt('username', required=True)
+        self['password']  = opt('password', required=True)
+        self['port']      = opt('port', default=None)
+        self['ssl']       = opt('ssl', default=False)
+        self['base_url']  = opt('base_url', None)
+        self['archive']   = opt('archive')
+
+        config_rules = opt('rules', required=True)
+        self['rules'] = []
+        for config_rule in config_rules:
+            rule = DEFAULT_RULE.copy()
+            if 'url' not in config_rule:
+                raise ConfigurationError('URL is required for rules')
+            rule.update(config_rule)
+            if self['base_url']:
+                url = rule['url']
+                url = self['base_url'].rstrip('/') + '/' + url.lstrip('/')
+                rule['url'] = url
+            self['rules'].append(rule)
 
 
 class Handler(object):
@@ -148,63 +225,47 @@ class Handler(object):
         If `fileformat` is absent, it will try to guess
         Possible values for `fileformat` are: 'yml'('yaml')
         """
-        if not config:
-            if not config_file:
-                raise ValueError(\
-                            "Either config or config_file must be specified")
-            if not fileformat:
-                fileformat = os.path.splitext(config_file)[1][1:]
-            if fileformat in ['yml', 'yaml']:
-                import yaml
-                config = yaml.load(open(config_file, 'r'))
-        self.config = config
+        self.config = Config(config, config_file, fileformat)
 
     def load_backend(self):
         if self.config['backend'] == 'imap':
-            host = self.config.get('host', None)
-            if not host:
-                raise ConfigurationError("'host' option is required")
-            username = self.config.get('username', None)
-            if not username:
-                raise ConfigurationError("'username' option is required")
-            password = self.config.get('password', None)
-            if not password:
-                raise ConfigurationError("'password' option is required")
-            port = self.config.get('port', None)
-            ssl = self.config.get('ssl', False)
-            query = self.config.get('query', 'all')
-            if not query in ['all', 'unseen', 'undeleted']:
-                raise ConfigurationError("Unknown query: %s" % query)
-            mailboxes = self.config.get('inboxes', ['INBOX'])
-            self.base_url = self.config.get('base_url', None)
+            client = ImapClient(self.config['host'],
+                                self.config['username'],
+                                self.config['password'],
+                                self.config['port'],
+                                self.config['ssl'])
+            self.client = client
 
+            self.base_url = self.config['base_url']
             self.rules = self.config['rules']
-            client = ImapClient(host, username, password, port, ssl)
-            self.msg_list = getattr(client, query)()
         else:
             raise ConfigurationError("Backend '%s' is not supported" %\
                                      self.config['backend'])
 
     def process(self):
         self.load_backend()
-        mapper = Mapper(self.rules, self.base_url)
-        for url, result in mapper.process(self.msg_list):
+        mapper = Mapper(self.client, self.config)
+        for url, result in mapper.process(self.rules):
             yield url, result
 
 
 if __name__ == '__main__':
     sample_rules = [
         {
-            'url': 'http://localhost:8000/mail_test/',
+            'url': 'http://localhost:8000/translation_mail_test/',
             'conditions': {
                 'sender': ['*@gmail.com', '*@odesk.com', '*@google.com'],
-                'subject': '*test*',
             },
             'add_params': {'message_type':'test'},
             'actions': ['mark_as_read'],
+            'query': ['SUBJECT', 'translation', 'SINCE', '03-Jan-2011']
         },
         { #"Catch all" rule
             'url': 'http://localhost:8000/mail_test/',
+            'conditions': {
+                'subject': '*task*',
+            },
+            'query': ['BEFORE', '1-Jan-2010'],
         },
     ]
 
@@ -214,8 +275,12 @@ if __name__ == '__main__':
         'ssl': 'true',
         'username': 'clientg.test@gmail.com',
         'password': 'ClientGoogle',
+        'archive': '[Gmail]/All Mail',
         'rules': sample_rules,
     }
 
     handler = Handler(config=sample_config)
-    handler.process()
+    for url, result in handler.process():
+        print "URL:", url
+        print "result:", result
+        print

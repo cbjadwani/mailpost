@@ -47,10 +47,10 @@ class Message(object):
         self.attachments = []
         self.sender = ''
         self.receiver = ''
-        sender = SENDER_EXPR.search(self._msg['from'])
+        sender = SENDER_EXPR.search(str(self._msg['from']))
         if sender:
             self.sender = sender.group()
-        receiver = SENDER_EXPR.search(self._msg['to'])
+        receiver = SENDER_EXPR.search(str(self._msg['to']))
         if receiver:
             self.receiver = receiver.group()
         for part in self._msg.walk():
@@ -92,8 +92,15 @@ class Message(object):
     def mark_as_read(self):
         self.add_flag(r'\Seen')
 
+    def copy(self, dest_dir):
+        self.session.copy(self. uid, dest_dir)
+
     def delete(self):
         self.add_flag(r'\Deleted')
+
+    def move(self, dest_dir):
+        self.copy(dest_dir)
+        self.delete()
 
     def download(self):
         #TODO: Ideally we shouldn't download the whole thing in order to parse
@@ -111,35 +118,42 @@ class MessageList(object):
 
     def _get_uids(self):
         charset = None #FIXME
-        status, data = self.session.uid('SEARCH', charset, self.query)
+        status, data = self.session.uid('SEARCH', charset, *self.query)
         if status != 'OK':
             raise Exception(data)
         self._uids = data[0].split()
 
-    def __len__(self):
+    @property
+    def uids(self):
         if self._uids is None:
             self._get_uids()
-        return len(self._uids)
+        return self._uids
+
+    def __len__(self):
+        return len(self.uids)
 
     def __iter__(self):
-        if self._uids is None:
-            self._get_uids()
-        for uid in self._uids:
+        for uid in self.uids:
             yield self.get(uid)
 
     def __getitem__(self, key):
         if not isinstance(key, (slice, int)):
             raise TypeError
-        if self._uids is None:
-            self._get_uids()
         if isinstance(key, slice):
             #TODO: Generator should be used here:
-            return [self.get(uid) for uid in self._uids[key]]
+            return [self.get(uid) for uid in self.uids[key]]
         else:
-            return self.get(self._uids[key])
+            return self.get(self.uids[key])
 
     def get(self, uid):
-        return self._cache.get(uid, Message(self.session, uid))
+        try:
+            return self._cache[uid]
+        except KeyError, exc:
+            if uid not in self.uids:
+                raise exc
+            message = Message(self.session, uid)
+            self._cache[uid] = message
+            return message
 
 
 class ImapClient(object):
@@ -167,6 +181,10 @@ class ImapClient(object):
         port = self.port or default_port
         self._connection = cls(self.host, port)
 
+    def _be_ready(self):
+        if not self.mailbox:
+            self.select()
+
     @property
     def connection(self):
         if not self._connection:
@@ -175,6 +193,7 @@ class ImapClient(object):
 
     def login(self, username, password):
         self.connection.login(username, password)
+        self.logged_in = True
 
     def select(self, mailbox='INBOX'):
         if not self.logged_in: #TODO: Maybe general 'state' would be better
@@ -184,10 +203,9 @@ class ImapClient(object):
         self.connection.select(mailbox)
         self.mailbox = mailbox
 
-    def search(self, query):
-        if not self.mailbox:
-            self.select()
-        return MessageList(self.connection, query)
+    def search(self, *query_args):
+        self._be_ready()
+        return MessageList(self.connection, query_args)
 
     def all(self):
         return self.search('ALL')
@@ -202,20 +220,35 @@ class ImapClient(object):
         return self.search('(DELETED)')
 
     def close(self):
-        self.connection.close()
-        self._connection = None
+        if self.mailbox:
+            self.connection.close()
+            self.mailbox = None
 
     def logout(self):
         self.close()
         self.connection.logout()
+        self._connection = None
+        self.logged_in = False
+
+    def list(self):
+        self._be_ready()
+        return self.connection.list()
+
+    def copy(self, message_set, mailbox):
+        self._be_ready()
+        return self.connection.copy(message_set, mailbox)
 
 
 if __name__ == '__main__':
-    USERNAME = 'test@gmail.com'
-    PASSWORD = 'TestTest'
+    from getpass import getpass
+    USERNAME = raw_input("Enter your e-mail: ")
+    PASSWORD = getpass()
     inbox = ImapClient('imap.gmail.com', USERNAME,
                        PASSWORD, ssl=True)
     print '---- LATEST 10 messages ----'
     for message in inbox.nondeleted()[-10:]:
         print message
+    print '---- Directory List ----'
+    for directory in inbox.list()[1]:
+        print directory
     inbox.logout()
