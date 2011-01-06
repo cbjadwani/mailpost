@@ -19,7 +19,7 @@ from mock import Mock, patch
 
 from mailpost.fnmatch import fnmatch, fnmatchcase, translate
 from mailpost.imap import ImapClient, Message
-from mailpost.handler import Handler, Mapper, DEFAULT_RULE
+from mailpost.handler import Handler, Mapper, Config
 
 
 class TestFnmatch(unittest.TestCase):
@@ -160,17 +160,31 @@ class TestMailPost(unittest.TestCase):
                 },
             ]
 
-        self.sample_rules = []
-        for rule in sample_rules:
-            full_rule = DEFAULT_RULE.copy()
-            full_rule.update(rule)
-            self.sample_rules.append(full_rule)
+        sample_config = {
+            'backend': 'imap',
+            'host': 'imap.gmail.com',
+            'ssl': 'true',
+            'username': 'clientg.test@gmail.com',
+            'password': 'ClientGoogle',
+            'base_url': 'http://localhost:8000/',
+            'archive': '[Gmail]/All Mail',
+            'rules': sample_rules,
+        }
+
+        self.sample_config = Config(config = sample_config)
+
+        #self.sample_rules = []
+        #for rule in sample_rules:
+        #    full_rule = DEFAULT_RULE.copy()
+        #    full_rule.update(rule)
+        #    self.sample_rules.append(full_rule)
 
     def test_mapper_current_workflow(self, *args, **kwargs):
-        mapper = Mapper(self.mockclient, 'http://localhost:8000')
-        matches = list(mapper.get_messages(self.sample_rules))
+        mapper = Mapper(self.mockclient, self.sample_config)
+        matches = list(mapper.get_messages(self.sample_config['rules']))
         self.assert_(len(matches) == 2, len(matches))
-        for url, message, rule in matches:
+        for message, rule in matches:
+            url = rule['url']
             mid = message = message.get('Message-ID')
             if rule['query'] == ['UNSEEN']:
                 self.assert_(mid=='123', mid)
