@@ -38,6 +38,7 @@ DEFAULT_RULE = {
     #Backend-specific actions
     'actions': [],
     'query': ['ALL'],
+    'mailbox': 'INBOX',
 }
 
 
@@ -47,19 +48,18 @@ class ConfigurationError(Exception):
 
 class Mapper(object):
 
-    def __init__(self, client, base_url=None):
+    def __init__(self, client, config):
         self.client = client
-        self.base_url = base_url
+        self.base_url = config['base_url']
+        self.archive_dir = config['archive']
 
     def map(self, rule):
-        url = rule['url']
-        if self.base_url:
-            url = self.base_url.rstrip('/') + '/' + url.lstrip('/')
         match_func = fnmatch.fnmatch
         if rule['syntax'] == 'regexp':
-            mathc_func = re.match
-        query_args = rule['query']
-        msg_list = self.client.search(*query_args)
+            match_func = re.match
+
+        self.client.select(rule['mailbox'])
+        msg_list = self.client.search(*rule['query'])
 
         for message in msg_list:
             match = True
@@ -79,13 +79,13 @@ class Mapper(object):
                                 "Pattern should be string or list, not %s" %\
                                              type(pattern))
             if match:
-                yield url, message
+                yield message
 
 
     def get_messages(self, rules):
         for rule in rules:
-            for url, message in self.map(rule):
-                yield url, message, rule
+            for message in self.map(rule):
+                yield message, rule
 
 
     def process(self, rules):
@@ -98,7 +98,15 @@ class Mapper(object):
         # Poster: Register the streaming http handlers with urllib2
         register_openers()
 
-        for url, message, options in self.get_messages(rules):
+        processed_mailboxes = set()
+        processed_uids = set()
+
+        for message, options in self.get_messages(rules):
+            if message.uid in processed_uids:
+                continue
+            processed_mailboxes.add(options['mailbox'])
+            processed_uids.add(message.uid)
+
             for action in options['actions']:
                 getattr(message, action)()
             files = []
@@ -122,6 +130,7 @@ class Mapper(object):
             data = MultipartParam.from_params(data)
             data += files
             datagen, headers = multipart_encode(data)
+            url = options['url']
             request = urllib2.Request(url, datagen, headers)
             if options.get('auth', None):
                 cj, urlopener = auth.authenticate(options['auth'], request, 
@@ -132,6 +141,16 @@ class Mapper(object):
                 result = e
                 #continue    # TODO Log error and proceed.
             yield url, result
+
+        # archive messages
+        if self.archive_dir:
+            for mailbox in processed_mailboxes:
+                self.client.select(mailbox)
+                msg_list = self.client.search('ALL')
+                for uid in msg_list.uids:
+                    if uid not in processed_uids:
+                        message = msg_list.get(uid)
+                        message.move(self.archive_dir)
 
 
 class Config(dict):
@@ -176,8 +195,8 @@ class Config(dict):
         self['password']  = opt('password', required=True)
         self['port']      = opt('port', default=None)
         self['ssl']       = opt('ssl', default=False)
-        self['mailboxes'] = opt('inboxes', ['INBOX'], type_='list')
         self['base_url']  = opt('base_url', None)
+        self['archive']   = opt('archive')
 
         config_rules = opt('rules', required=True)
         self['rules'] = []
@@ -186,6 +205,10 @@ class Config(dict):
             if 'url' not in config_rule:
                 raise ConfigurationError('URL is required for rules')
             rule.update(config_rule)
+            if self['base_url']:
+                url = rule['url']
+                url = self['base_url'].rstrip('/') + '/' + url.lstrip('/')
+                rule['url'] = url
             self['rules'].append(rule)
 
 
@@ -218,7 +241,7 @@ class Handler(object):
 
     def process(self):
         self.load_backend()
-        mapper = Mapper(self.client, self.base_url)
+        mapper = Mapper(self.client, self.config)
         for url, result in mapper.process(self.rules):
             yield url, result
 
@@ -232,14 +255,14 @@ if __name__ == '__main__':
             },
             'add_params': {'message_type':'test'},
             'actions': ['mark_as_read'],
-            'query': ['SUBJECT', 'translation', 'SINCE', '15-Dec-2010']
+            'query': ['SUBJECT', 'translation', 'SINCE', '03-Jan-2011']
         },
         { #"Catch all" rule
             'url': 'http://localhost:8000/mail_test/',
             'conditions': {
                 'subject': '*task*',
             },
-            'query': ['BEFORE', '1-Nov-2010'],
+            'query': ['BEFORE', '1-Jan-2010'],
         },
     ]
 
@@ -249,6 +272,7 @@ if __name__ == '__main__':
         'ssl': 'true',
         'username': 'clientg.test@gmail.com',
         'password': 'ClientGoogle',
+        'archive': '[Gmail]/All Mail',
         'rules': sample_rules,
     }
 
