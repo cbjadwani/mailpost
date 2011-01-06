@@ -111,24 +111,25 @@ class Mapper(object):
             for action in options['actions']:
                 getattr(message, action)()
             files = []
-            if options['send_files']:
-                for num, attachment in enumerate(message.attachments):
-                    filename, ctype, fileobj = attachment
-                    file_param = MultipartParam('attachment[%d]' % num,
-                                                filename=filename,
-                                                filetype=ctype,
-                                                fileobj=fileobj)
-                    files.append(file_param)
             data = {}
-            for name in options['msg_params']:
-                part = message.get(name, None)
-                if not part:
-                    part = getattr(message, name, None)
-                if part: #TODO: maybe we should raise an exception
-                         #if there's no part
-                    if not isinstance(part, basestring):
-                        part = pickle.dumps(part)
-                    data[name] = part
+            if options['raw']:
+                data['raw_message'] = message.pickled()
+            else:
+                if options['send_files']:
+                    for num, attachment in enumerate(message.attachments):
+                        filename, ctype, fileobj = attachment
+                        file_param = MultipartParam('attachment[%d]' % num,
+                                                    filename=filename,
+                                                    filetype=ctype,
+                                                    fileobj=fileobj)
+                        files.append(file_param)
+                for name in options['msg_params']:
+                    part = message.get(name, None)
+                    if not part:
+                        part = getattr(message, name, None)
+                    if part: #TODO: maybe we should raise an exception
+                            #if there's no part
+                        data[name] = part
             data.update(options['add_params'])
             data = MultipartParam.from_params(data)
             data += files
@@ -200,6 +201,7 @@ class Config(dict):
         self['ssl']       = opt('ssl', default=False)
         self['base_url']  = opt('base_url', None)
         self['archive']   = opt('archive')
+        self['raw']       = opt('raw', default=False)
 
         config_rules = opt('rules', required=True)
         self['rules'] = []
