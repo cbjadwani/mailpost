@@ -9,12 +9,13 @@ import urllib
 import urllib2
 import os
 import pickle
-from imap import ImapClient
+from datetime import datetime, timedelta
 from poster.encode import multipart_encode, MultipartParam
 from poster.streaminghttp import register_openers
 
 from mailpost import fnmatch
 from mailpost import auth
+from mailpost.imap import ImapClient
 
 #TODO: Everything.
 
@@ -47,12 +48,26 @@ class ConfigurationError(Exception):
     pass
 
 
+def parse_time_delta(date_str):
+    import re
+    date_re = r'''(?:(?P<weeks> \d+) \s* weeks)? \s* ,? \s* 
+                  (?:(?P<days>  \d+) \s* days)?
+               '''
+    dre = re.compile(date_re, flags=re.IGNORECASE+re.VERBOSE)
+    match = dre.match(date_str.strip())
+    if not match:
+        return None
+    td_args = dict((k, int(v)) for (k, v) in match.groupdict().items() if v is not None)
+    return timedelta(**td_args)
+
+
 class Mapper(object):
 
     def __init__(self, client, config):
         self.client = client
         self.base_url = config['base_url']
         self.archive_dir = config['archive']
+        self.archive_life = config['archive_life']
 
     def map(self, rule):
         match_func = fnmatch.fnmatch
@@ -156,6 +171,16 @@ class Mapper(object):
                         message = msg_list.get(uid)
                         message.move(self.archive_dir)
 
+            if self.archive_life:
+                delta = parse_time_delta(self.archive_life)
+                before_date = datetime.now() - delta
+                before_str = before_date.strftime('%d-%b-%Y')
+                self.client.select(self.archive_dir)
+                msg_list = self.client.search("BEFORE", before_str)
+                for msg in msg_list:
+                    msg.delete()
+
+
 
 class Config(dict):
     def __init__(self, config=None, config_file=None, fileformat=None):
@@ -201,6 +226,7 @@ class Config(dict):
         self['ssl']       = opt('ssl', default=False)
         self['base_url']  = opt('base_url', None)
         self['archive']   = opt('archive')
+        self['archive_life'] = opt('archive_life', '26 weeks')
         self['raw']       = opt('raw', default=False)
 
         config_rules = opt('rules', required=True)
@@ -278,6 +304,7 @@ if __name__ == '__main__':
         'username': 'clientg.test@gmail.com',
         'password': 'ClientGoogle',
         'archive': '[Gmail]/All Mail',
+        'archive_life': '4 weeks',
         'rules': sample_rules,
     }
 
