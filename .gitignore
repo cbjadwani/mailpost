@@ -4,3 +4,5 @@ dist/*
 docs/*
 .project
 .pydevproject
+*.swp
+*.orig

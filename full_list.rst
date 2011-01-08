@@ -98,9 +98,14 @@ handler.py
 
 * class Mapper(object)
  
- * def __init__(self, mappings=None, base_url=None)
- * def map(self, message)
- * def process(self, inbox)
+ * def __init__(self, client, config)
+ * def map(self, rule)
+ * def get_messages(self, rules)
+ * def process(self, rules)
+
+* class Config(dict)
+
+ * def __init__(self, config=None, config_file=None, fileformat=None)
 
 * class Handler(object)
 
@@ -126,13 +131,17 @@ imap.py
  * @property def body(self)
  * def add_flag(self, flag)
  * def mark_as_read(self)
+ * def copy(self, dest_dir)
  * def delete(self)
+ * def move(self, det_dir)
  * def download(self)
+ * def pickled(self)
  
 * class MessageList(object)
 
  * def __init__(self, session, query)
  * def _get_uids(self)
+ @property def uids(self)
  * def __len__(self)
  * def __iter__(self)
  * def __getitem__(self, key)
@@ -142,6 +151,7 @@ imap.py
 
  * def __init__(self, host, username, password, port=None, ssl=False)
  * def connect(self)
+ * def _be_ready(self)
  * @property def connection(self)
  * def login(self, username, password)
  * def select(self, mailbox='INBOX')
@@ -152,6 +162,7 @@ imap.py
  * def deleted(self)
  * def close(self)
  * def logout(self)
+ * def copy(self, message_set, mailbox)
 
 ..
 .. _tests:
@@ -168,8 +179,6 @@ tests.py
 * class TestMailPost(unittest.TestCase)
 
  * def test_mapper_current_workflow
- * def test_mapper_desired_workflow
- * def test_message_id
  
 ..
 .. _management:

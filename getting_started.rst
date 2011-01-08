@@ -38,22 +38,23 @@ Settings
 
 Example of config yaml file::
          
-    backend: 'imap'
-    host: 'imap.gmail.com'
-    port: null #If none is specified, default IMAP port will be used
-    ssl: 'true'
-    username: 'change_this@gmail.com'
-    password: 'ChangeThis'
-    mailboxes: ['INBOX'] #default
-    query: 'all' #Options are 'all', 'unseen', 'seen', 'deleted', 'nondeleted'  
-    base_url: 'http://localhost:8000/' #Default: null
+    backend     : 'imap'            # Required
+    host        : 'imap.gmail.com'  # Required
+    port        : null #If none is specified, default IMAP port will be used
+    ssl         : 'true'
+    username    : 'change_this@gmail.com'  # Required
+    password    : 'ChangeThis'             # Required
+    base_url    : 'http://localhost:8000/' #Default: null
+    archive     : [Gmail]\All Mail  # Move messages in unprocessed messages in mailbox to specified directory if specified
+    archive_life: '4 weeks, 2 days' # Format [N weeks][,][N days] Default: '26 weeks' 
+                                    #Delete messages in archive folder that are older than specified period.
     
     #Note the difference between 'from'('to') and 'sender'('receiver') fields
     #The former contains full address, like 'Test Mname <test@gmail.com>'
     #The latter contains email only, like 'test@gmail.com'
     
     rules:
-       -   url       : 'mail_test/' 
+       -   url       : 'mail_test/' # Required
            method    : 'post' #default
            conditions: #Multiple conditions have effect of boolean 'and'
                    sender : ['*@gmail.com', '*@odesk.com'] #Multiple patterns have effect of boolean 'or'
@@ -72,5 +73,7 @@ Example of config yaml file::
            actions   : ['mark_as_read','delete'] 
                         # Additional processing actions. Default: []. 
                         #In future it may vary depending on backend
+           mailbox   : 'INBOX' #default
+           query     : ['all'] # Backend specific. IMAP examples: 'all', 'unseen', ['since', '01-Jan-2011']
 
          
