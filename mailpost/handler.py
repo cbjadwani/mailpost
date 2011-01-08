@@ -144,6 +144,8 @@ class Mapper(object):
                         part = getattr(message, name, None)
                     if part: #TODO: maybe we should raise an exception
                             #if there's no part
+                        if not isinstance(part, basestring):
+                            part = pickle.dumps(part)
                         data[name] = part
             data.update(options['add_params'])
             data = MultipartParam.from_params(data)
