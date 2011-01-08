@@ -139,10 +139,11 @@ class Mapper(object):
                                                     fileobj=fileobj)
                         files.append(file_param)
                 for name in options['msg_params']:
-                    part = message.get(name, None)
-                    if not part:
-                        part = getattr(message, name, None)
-                    if part: #TODO: maybe we should raise an exception
+                    # using Ellipsis to allow None as param value
+                    part = message.get(name, Ellipsis)
+                    if part is Ellipsis:
+                        part = getattr(message, name, Ellipsis)
+                    if part is not Ellipsis: #TODO: maybe we should raise an exception
                             #if there's no part
                         if not isinstance(part, basestring):
                             part = pickle.dumps(part)
