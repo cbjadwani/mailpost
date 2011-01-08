@@ -88,13 +88,17 @@ class Message(object):
         return "\n".join(self.text_bodies)
 
     def add_flag(self, flag):
-        self.session.uid('STORE', self.uid, '+FLAGS', flag)
+        status, data = self.session.uid('STORE', self.uid, '+FLAGS', flag)
+        if status != 'OK':
+            raise Exception('add_flag failed: %s' % data)
 
     def mark_as_read(self):
         self.add_flag(r'\Seen')
 
     def copy(self, dest_dir):
-        self.session.copy(self. uid, dest_dir)
+        status, data = self.session.copy(self. uid, dest_dir)
+        if status != 'OK':
+            raise Exception('copy failed: %s' % data)
 
     def delete(self):
         self.add_flag(r'\Deleted')
@@ -196,15 +200,21 @@ class ImapClient(object):
         return self._connection
 
     def login(self, username, password):
-        self.connection.login(username, password)
+        status, data = self.connection.login(username, password)
+        if status != 'OK':
+            raise Exception(data)
         self.logged_in = True
 
     def select(self, mailbox='INBOX'):
         if not self.logged_in: #TODO: Maybe general 'state' would be better
             self.login(self.username, self.password)
         if self.mailbox:
-            self.connection.close()
-        self.connection.select(mailbox)
+            status, data = self.connection.close()
+            if status != 'OK':
+                raise Exception(data)
+        status, data = self.connection.select(mailbox)
+        if status != 'OK':
+            raise Exception(data)
         self.mailbox = mailbox
 
     def search(self, *query_args):
@@ -230,7 +240,9 @@ class ImapClient(object):
 
     def logout(self):
         self.close()
-        self.connection.logout()
+        status, data = self.connection.logout()
+        if status != 'OK':
+            raise Exception(data)
         self._connection = None
         self.logged_in = False
 
