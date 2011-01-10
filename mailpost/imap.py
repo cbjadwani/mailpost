@@ -11,6 +11,7 @@ import email
 from cStringIO import StringIO
 import re
 import pickle
+from email.utils import mktime_tz, parsedate_tz
 
 #WARNING: This module is at very early stage of development
 
@@ -35,17 +36,14 @@ class Message(object):
     def __init__(self, session, uid):
         self.session = session
         self.uid = uid
-        status, data = self.session.uid('FETCH', uid, '(RFC822)')
-        #status, data = self.session.uid('FETCH', uid, '(BODYSTRUCTURE)')
+        status, data = self.session.uid('FETCH', uid, '(BODY.PEEK[HEADER])')
         if status != 'OK':
             raise Exception(data)
         self._msg = email.message_from_string(data[0][1])
-        self._prepare()
+        self._prepare_header()
+        self.downloaded = False
 
-    def _prepare(self):
-        self.text_bodies = []
-        self.html_bodies = []
-        self.attachments = []
+    def _prepare_header(self):
         self.sender = ''
         self.receiver = ''
         sender = SENDER_EXPR.search(str(self._msg['from']))
@@ -54,17 +52,42 @@ class Message(object):
         receiver = SENDER_EXPR.search(str(self._msg['to']))
         if receiver:
             self.receiver = receiver.group()
+
+    def _prepare_body(self):
+        self._text_bodies = []
+        self._html_bodies = []
+        self._attachments = []
         for part in self._msg.walk():
             filename = part.get_filename()
             ctype = part.get_content_type()
             if filename:
-                self.attachments.append((filename, ctype,
+                self._attachments.append((filename, ctype,
                                     StringIO(part.get_payload(decode=True))))
             else:
                 if ctype == 'text/plain':
-                    self.text_bodies.append(part.get_payload())
+                    self._text_bodies.append(part.get_payload())
                 elif ctype == 'text/html':
-                    self.html_bodies.append(part.get_payload())
+                    self._html_bodies.append(part.get_payload())
+
+    @property
+    def text_bodies(self):
+        self.download()
+        return self._text_bodies
+
+    @property
+    def html_bodies(self):
+        self.download()
+        return self._html_bodies
+
+    @property
+    def attachments(self):
+        self.download()
+        return self._attachments
+
+    @property
+    def utctimestamp(self):
+        datestr = self._msg['date']
+        return mktime_tz(parsedate_tz(datestr))
 
     def __getitem__(self, name):
         return self._msg[name]
@@ -108,11 +131,17 @@ class Message(object):
         self.delete()
 
     def download(self):
-        #TODO: Ideally we shouldn't download the whole thing in order to parse
-        #headers.
-        pass
+        if self.downloaded:
+            return
+        status, data = self.session.uid('FETCH', self.uid, '(BODY.PEEK[])')
+        if status != 'OK':
+            raise Exception(data)
+        self._msg = email.message_from_string(data[0][1])
+        self.downloaded = True
+        self._prepare_body()
 
     def pickled(self):
+        self.download()
         return pickle.dumps(self._msg)
 
 
@@ -124,17 +153,14 @@ class MessageList(object):
         self._cache = {}
         self._uids = None
 
-    def _get_uids(self):
-        charset = None #FIXME
-        status, data = self.session.uid('SEARCH', charset, *self.query)
-        if status != 'OK':
-            raise Exception(data)
-        self._uids = data[0].split()
-
     @property
     def uids(self):
         if self._uids is None:
-            self._get_uids()
+            charset = None #FIXME
+            status, data = self.session.uid('SEARCH', charset, *self.query)
+            if status != 'OK':
+                raise Exception(data)
+            self._uids = data[0].split()
         return self._uids
 
     def __len__(self):
@@ -166,8 +192,6 @@ class MessageList(object):
 
 class ImapClient(object):
 
-    headers_format = '(RFC822)'
-
     def __init__(self, host, username, password, port=None, ssl=False):
         self.host = host
         self.username = username
@@ -177,7 +201,7 @@ class ImapClient(object):
         self._connection = None
         self.logged_in = False
         self.mailbox = None
-        self.echo = False
+        #self.echo = False
 
     def connect(self):
         if self.ssl:
@@ -209,9 +233,7 @@ class ImapClient(object):
         if not self.logged_in: #TODO: Maybe general 'state' would be better
             self.login(self.username, self.password)
         if self.mailbox:
-            status, data = self.connection.close()
-            if status != 'OK':
-                raise Exception(data)
+            self.close()
         status, data = self.connection.select(mailbox)
         if status != 'OK':
             raise Exception(data)
@@ -235,24 +257,32 @@ class ImapClient(object):
 
     def close(self):
         if self.mailbox:
-            self.connection.close()
             self.mailbox = None
+            status, data = self.connection.close()
+            if status != 'OK':
+                raise Exception(data)
 
     def logout(self):
         self.close()
         status, data = self.connection.logout()
-        if status != 'OK':
+        if status != 'BYE':
             raise Exception(data)
         self._connection = None
         self.logged_in = False
 
-    def list(self):
+    def list(self, directory='""', pattern='*'):
         self._be_ready()
-        return self.connection.list()
+        status, data = self.connection.list(directory='""', pattern='*')
+        if status != 'OK':
+            raise Exception(data)
+        return data
 
     def copy(self, message_set, mailbox):
         self._be_ready()
-        return self.connection.copy(message_set, mailbox)
+        status, data = self.connection.copy(message_set, mailbox)
+        if status != 'OK':
+            raise Exception(data)
+        return data
 
 
 if __name__ == '__main__':
@@ -265,6 +295,6 @@ if __name__ == '__main__':
     for message in inbox.nondeleted()[-10:]:
         print message
     print '---- Directory List ----'
-    for directory in inbox.list()[1]:
+    for directory in inbox.list():
         print directory
     inbox.logout()
