@@ -11,7 +11,7 @@ import email
 from cStringIO import StringIO
 import re
 import pickle
-from email.utils import mktime_tz, parsedate_tz
+from email.utils import mktime_tz, parsedate_tz, parseaddr
 
 #WARNING: This module is at very early stage of development
 
@@ -27,8 +27,15 @@ from email.utils import mktime_tz, parsedate_tz
 # requested
 # 3. Encodings support
 
-SENDER_EXPR = re.compile(r'[\w\.]+@[\w\.-]+')
-#Doesn't care for email validity much
+
+class IMAPError(Exception):
+    def __init__(self, status, data):
+        self.status = status
+        self.data = data
+
+    def __str__(self):
+        format_data = ', '.join(map(str, self.data))
+        return '(Type:%s) %s' % (self.status, format_data)
 
 
 class Message(object):
@@ -38,20 +45,14 @@ class Message(object):
         self.uid = uid
         status, data = self.session.uid('FETCH', uid, '(BODY.PEEK[HEADER])')
         if status != 'OK':
-            raise Exception(data)
+            raise IMAPError(status, data)
         self._msg = email.message_from_string(data[0][1])
         self._prepare_header()
         self.downloaded = False
 
     def _prepare_header(self):
-        self.sender = ''
-        self.receiver = ''
-        sender = SENDER_EXPR.search(str(self._msg['from']))
-        if sender:
-            self.sender = sender.group()
-        receiver = SENDER_EXPR.search(str(self._msg['to']))
-        if receiver:
-            self.receiver = receiver.group()
+        self.sender   = parseaddr(self._msg['from'])[1]
+        self.receiver = parseaddr(self._msg['to'])[1]
 
     def _prepare_body(self):
         self._text_bodies = []
@@ -135,7 +136,7 @@ class Message(object):
             return
         status, data = self.session.uid('FETCH', self.uid, '(BODY.PEEK[])')
         if status != 'OK':
-            raise Exception(data)
+            raise IMAPError(status, data)
         self._msg = email.message_from_string(data[0][1])
         self.downloaded = True
         self._prepare_body()
@@ -159,7 +160,7 @@ class MessageList(object):
             charset = None #FIXME
             status, data = self.session.uid('SEARCH', charset, *self.query)
             if status != 'OK':
-                raise Exception(data)
+                raise IMAPError(status, data)
             self._uids = data[0].split()
         return self._uids
 
@@ -174,8 +175,10 @@ class MessageList(object):
         if not isinstance(key, (slice, int)):
             raise TypeError
         if isinstance(key, slice):
-            #TODO: Generator should be used here:
-            return [self.get(uid) for uid in self.uids[key]]
+            def msg_gen():
+                for uid in self.uids[key]:
+                    yield self.get(uid)
+            return msg_gen()
         else:
             return self.get(self.uids[key])
 
@@ -223,10 +226,15 @@ class ImapClient(object):
             self.connect()
         return self._connection
 
-    def login(self, username, password):
+    def login(self, username=None, password=None):
+        if username is None:
+            username = self.username
+        if password is None:
+            password = self.password
+
         status, data = self.connection.login(username, password)
         if status != 'OK':
-            raise Exception(data)
+            raise IMAPError(status, data)
         self.logged_in = True
 
     def select(self, mailbox='INBOX'):
@@ -236,7 +244,7 @@ class ImapClient(object):
             self.close()
         status, data = self.connection.select(mailbox)
         if status != 'OK':
-            raise Exception(data)
+            raise IMAPError(status, data)
         self.mailbox = mailbox
 
     def search(self, *query_args):
@@ -260,13 +268,13 @@ class ImapClient(object):
             self.mailbox = None
             status, data = self.connection.close()
             if status != 'OK':
-                raise Exception(data)
+                raise IMAPError(status, data)
 
     def logout(self):
         self.close()
         status, data = self.connection.logout()
         if status != 'BYE':
-            raise Exception(data)
+            raise IMAPError(status, data)
         self._connection = None
         self.logged_in = False
 
@@ -274,14 +282,14 @@ class ImapClient(object):
         self._be_ready()
         status, data = self.connection.list(directory='""', pattern='*')
         if status != 'OK':
-            raise Exception(data)
+            raise IMAPError(status, data)
         return data
 
     def copy(self, message_set, mailbox):
         self._be_ready()
         status, data = self.connection.copy(message_set, mailbox)
         if status != 'OK':
-            raise Exception(data)
+            raise IMAPError(status, data)
         return data
 
 
