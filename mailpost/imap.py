@@ -66,9 +66,9 @@ class Message(object):
                                     StringIO(part.get_payload(decode=True))))
             else:
                 if ctype == 'text/plain':
-                    self._text_bodies.append(part.get_payload())
+                    self._text_bodies.append(part.get_payload(decode=True))
                 elif ctype == 'text/html':
-                    self._html_bodies.append(part.get_payload())
+                    self._html_bodies.append(part.get_payload(decode=True))
 
     @property
     def text_bodies(self):
