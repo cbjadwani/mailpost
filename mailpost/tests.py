@@ -131,22 +131,22 @@ class MockIMAP(Mock):
 
     def logout(self):
         if not self.logged_in:
-            return 'NOT', 'not logged in'
+            return 'BAD', 'not logged in'
         self.logged_in = False
         return ('OK', None)
 
     def select(self, mailbox):
         mailbox = mailbox.lower()
         if self.selected:
-            return 'NOT', '%s already selected must close() first' % self.selected
+            return 'BAD', '%s already selected must close() first' % self.selected
         if mailbox not in self.mailboxes:
-            return 'BAD', 'mailbox %s not available' % mailbox
+            return 'NO', 'mailbox %s not available' % mailbox
         self.selected = self.mailboxes[mailbox]
         return ('OK', None)
 
     def close(self):
         if not self.selected:
-            return 'NOT', 'nothing to close'
+            return 'BAD', 'nothing to close'
         self.selected = None
         return ('OK', None)
 
@@ -155,7 +155,7 @@ class MockIMAP(Mock):
 
     def uid(self, *args, **kwargs):
         if kwargs:
-            raise Exception('positional args not tested (TODO)')
+            raise Exception('kwargs not tested')
 
         if not self.logged_in:
             return 'BAD', 'not logged in'
@@ -190,7 +190,7 @@ class MockIMAP(Mock):
         elif command == 'STORE':
             msg = self.get_msg(uid=args[1])
             if not msg:
-                return ('NOT', 'message not found')
+                return ('NO', 'message not found')
             msg = msg[0]
             if args[2] == '+FLAGS':
                 msg.flags.update(args[3:])
@@ -223,7 +223,8 @@ class MockIMAP(Mock):
 logged_requests = {}
 def patched_urlopen(request, *args, **kwargs):
     global logged_requests
-    logged_requests.setdefault(request.get_full_url(), []).append(list(request.get_data()))
+    url_params = logged_requests.setdefault(request.get_full_url(), [])
+    url_params.append(list(request.get_data()))
     request.read = lambda: 'OK'
     return request
 
@@ -281,8 +282,11 @@ class TestMailPost(unittest.TestCase):
         mockclient.select()
 
         mapper = Mapper(mockclient, self.sample_config)
-        matches = [(rule['mailbox'], msg) for (msg, rule) in mapper.get_messages(self.sample_config['rules'])]
-        self.assert_(len(matches) == len(set(matches)), len(set(matches)))
+        mapped = mapper.get_messages(self.sample_config['rules'])
+        matches = [(rule['mailbox'], msg) for (msg, rule) in mapped]
+        total, unique = len(matches), len(set(matches))
+        self.assert_(total == unique, (total, unique))
+
         boxes = {}
         for box, msg in matches:
             boxes.setdefault(box, []).append(msg)
@@ -299,25 +303,28 @@ class TestMailPost(unittest.TestCase):
 
         self.assert_(mailbox_len('INBOX')==14,        mailbox_len('INBOX'))
         self.assert_(mailbox_len('starred')==10,      mailbox_len('starred'))
-        self.assert_(mailbox_len('archive')==5,       mailbox_len('(deleted)'))
+        self.assert_(mailbox_len('archive')==5,       mailbox_len('archive'))
         self.assert_(mailbox_len('(deleted)')==11+26, mailbox_len('(deleted)'))
 
+        global logged_requests
         self.assert_(len(logged_requests.keys())==2, logged_requests.keys())
         for full_url, params_list in logged_requests.items():
             if 'unseen' in full_url:
                 for params in params_list:
-                    self.assert_(any(['name="raw_message"' in item for item in params]), 'raw_message')
-                    self.assert_(not any(['name="html_bodies"' in item for item in params]), 'not html_bodies')
+                    raw = ['name="raw_message"' in item for item in params]
+                    self.assert_(any(raw), 'raw_message')
+                    html = ['name="html_bodies"' in item for item in params]
+                    self.assert_(not any(html), 'not html_bodies')
             else:
                 for params in params_list:
-                    self.assert_(not any(['name="raw_message"' in item for item in params]), 'raw_message')
-                    param = [item for item in params if 'name="html_bodies"' in item]
+                    raw = ['name="raw_message"' in item for item in params]
+                    self.assert_(not any(raw), 'raw_message')
+                    param = [i for i in params if 'name="html_bodies"' in i]
                     self.assert_(len(param) == 1, 'html_bodies')
                     param = param[0]
                     import pickle
                     pickle_string = pickle.dumps([])
                     self.assert_(pickle_string in param, 'pickle.dumps([])')
-
 
 
 if __name__ == '__main__':
